@@ -1,0 +1,59 @@
+# Keeps the build context small and, more importantly, keeps host artefacts
+# out of the images.
+#
+# backend/.venv and frontend/node_modules are the two that matter. Both are
+# platform-specific — a Windows venv and Windows-resolved native modules —
+# so copying them into a Linux image produces binaries that cannot run, on
+# top of sending hundreds of megabytes to the daemon on every build. Each
+# Dockerfile installs its own dependencies for its own platform.
+
+# --- version control ---
+.git
+.gitignore
+.github
+
+# --- secrets ---
+# The image must never bake in a key. Compose passes configuration as
+# environment variables at run time instead.
+.env
+.env.local
+*.pem
+
+# --- Python ---
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+.model_cache
+
+# --- Node ---
+**/node_modules
+**/.next
+**/out
+**/.turbo
+**/npm-debug.log*
+**/tsconfig.tsbuildinfo
+
+# --- run artefacts ---
+evaluation/reports/*.json
+evaluation/reports/*.html
+**/*.sqlite3
+**/*.log
+
+# --- editor / OS ---
+.vscode
+.idea
+.claude
+**/.DS_Store
+**/Thumbs.db
+
+# --- docs and compose itself ---
+# Nothing in the image reads these; excluding them means a README edit does
+# not invalidate the dependency layer.
+README.md
+docker-compose.yml
+Makefile

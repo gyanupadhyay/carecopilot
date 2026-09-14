@@ -1,0 +1,51 @@
+# Secrets
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+next-env.d.ts
+.turbo/
+tsconfig.tsbuildinfo
+
+# Data / artifacts
+evaluation/reports/*.json
+evaluation/reports/*.html
+!evaluation/reports/.gitkeep
+*.sqlite3
+.model_cache/
+
+# Generated corpora (PRD §35). Both are rebuildable — `generate_data.py` and
+# `build_finetuning_dataset.py` are deterministic given their seeds — so
+# committing them would add megabytes of diff for nothing.
+#
+# data/fine_tuning is also the one directory in this repository where a
+# patient-data leak would be *durable*: a generated file that accidentally
+# carried a record would be committed, pushed, and outlive the fix. Ignoring
+# it means the leak test is the only thing that has to catch it, rather than
+# the leak test and a reviewer reading a 500-line JSONL diff.
+data/synthetic/*
+!data/synthetic/.gitkeep
+data/fine_tuning/*
+!data/fine_tuning/.gitkeep
+
+# OS / editor / agent tooling
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+.claude/

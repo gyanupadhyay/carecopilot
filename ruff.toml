@@ -1,0 +1,49 @@
+# Lint and format configuration for the whole monorepo.
+#
+# Declared at the root so that a developer's personal ruff settings cannot
+# change what CI considers a violation.
+
+line-length = 90
+target-version = "py312"
+extend-exclude = [".venv", "alembic/versions/*.py.mako", "node_modules"]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # import sorting
+    "UP",     # pyupgrade
+    "B",      # bugbear
+    "C4",     # comprehensions
+    "SIM",    # simplify
+    "ASYNC",  # async correctness
+    "RUF",
+]
+ignore = [
+    # Implicit string concatenation inside tuples is how the synthetic
+    # clinical text and the long docstrings are wrapped; flagging it would
+    # mean either very long lines or a less readable catalogue.
+    "ISC001",
+    "ISC003",
+    # `except Exception` is deliberate in the few places it appears: a
+    # health check that reports "unavailable", and an optional adapter
+    # registration that must not take down the connection.
+    "BLE001",
+]
+
+[lint.per-file-ignores]
+# Migrations are generated-shaped code: long literal DDL and a module-level
+# import block that must run after sys.path is adjusted.
+"backend/alembic/**" = ["E402", "E501"]
+# Re-exports.
+"**/__init__.py" = ["F401"]
+# The generator prints to stdout by design and uses a non-cryptographic RNG
+# on purpose: reproducible fake data is the point.
+"scripts/**" = ["S311", "E402"]
+
+[lint.isort]
+known-first-party = ["app"]
+
+[format]
+quote-style = "double"
