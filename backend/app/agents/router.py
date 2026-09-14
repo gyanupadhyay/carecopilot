@@ -171,7 +171,14 @@ _RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
         # would otherwise claim it.
         "KG",
         re.compile(
-            # "why was I prescribed X" / "why am I on X" — PRD Demo 4.
+            # "why was I prescribed X" / "why am I on X" — PRD Demo 4,
+            # which §18 calls "KG + RAG". KG is the right *entry*: the
+            # traversal resolves which condition the drug treats, and the
+            # note explaining it cannot be found until that is known. The
+            # RAG half is the edge out of `query_graph` (see `after_graph`),
+            # not a second route label — so this rule routes the question
+            # and the graph composes the two mechanisms.
+            #
             # ``prescrib\w*`` rather than ``\bprescrib\b``: the stem is never
             # a whole word, so a trailing word boundary matches nothing in
             # "prescribed" — the pattern silently never fired.

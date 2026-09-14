@@ -64,6 +64,16 @@ class AgentState(TypedDict, total=False):
     #: thing to challenge: §13 names it, the rows exist either way, and
     #: discarding them here is what would have to be undone later.
     graph_results: list[dict[str, Any]]
+    #: Which approved traversal ran, as its ``GraphIntent`` value.
+    #:
+    #: Read by the edge out of ``query_graph``: a traversal that answers
+    #: *what* is connected is finished when it returns rows, while one that
+    #: answers *why* has only found the link and still owes the explanation,
+    #: which lives in note prose rather than in the graph (PRD §18, §37
+    #: Demo 4). The intent is the only thing that separates the two, and
+    #: ``visited`` cannot carry it — it records that the node ran, not what
+    #: it asked for.
+    graph_intent: str
     context_text: str
     sources: list[Source]
     #: The validated statement that produced the answer, for the developer
@@ -110,6 +120,7 @@ def initial_state(
         tool_calls=0,
         retrieved=[],
         graph_results=[],
+        graph_intent="",
         context_text="",
         sources=[],
         generated_sql="",

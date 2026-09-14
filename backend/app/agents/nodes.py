@@ -561,12 +561,48 @@ def make_kg_node(deps: NodeDeps) -> Node:
         return {
             "system_prompt_extra": _graph_facts(result),
             "graph_results": list(result.rows),
+            "graph_intent": result.intent.value,
             "validation_errors": errors,
             "guardrails": ["kg_no_match"] if result.is_empty else [],
             "visited": ["query_graph"],
         }
 
     return query_graph
+
+
+#: Traversals that locate an explanation without containing one.
+#:
+#: The graph can say that metformin was prescribed at the encounter that
+#: recorded type 2 diabetes. It cannot say *why* the clinician chose it —
+#: that sentence was written in the note, and PRD §18 and §37 Demo 4 both
+#: describe this question as KG *and* RAG for exactly that reason: the
+#: traversal finds the link, retrieval supplies the words.
+#:
+#: Narrow on purpose. "Which medications treat my diabetes" is answered by
+#: the rows themselves, and sending it through retrieval would spend a
+#: retrieval and a reranker pass to decorate an answer that was already
+#: complete.
+EXPLANATORY_INTENTS: frozenset[str] = frozenset({GraphIntent.WHY_MEDICATION.value})
+
+
+def after_graph(state: AgentState) -> str:
+    """Whether a traversal still needs the notes behind it (PRD §37 Demo 4).
+
+    Three conditions, and each one is a case where chaining would be wrong
+    rather than merely unnecessary. An answer already set means the graph
+    was unreachable or the plan was incomplete, and retrieval cannot mend
+    either. No rows means entity resolution found nothing, so there is no
+    link for a note to explain, and retrieving anyway would hand the model
+    prose with nothing to anchor it — which is how an ungrounded answer gets
+    written. Any other intent is already complete in its rows.
+    """
+    if state.get("final_answer"):
+        return "generate_answer"
+    if state.get("graph_intent") not in EXPLANATORY_INTENTS:
+        return "generate_answer"
+    if not state.get("graph_results"):
+        return "generate_answer"
+    return "retrieve"
 
 
 def _graph_facts(result: GraphResult) -> str:

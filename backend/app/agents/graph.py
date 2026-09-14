@@ -4,14 +4,19 @@
       → classify_query
       → route_query ──┬─ API          → execute_api_tool
                       ├─ RAG          → retrieve
-                      ├─ KG           → query_graph
-                      ├─ HYBRID       → hybrid
-                      ├─ TEXT_TO_SQL  → text_to_sql
+                      ├─ KG           → query_graph ─┐
+                      ├─ HYBRID       → hybrid       │ why_medication
+                      ├─ TEXT_TO_SQL  → text_to_sql  └→ retrieve
                       ├─ ACTION       → action
                       └─ OUT_OF_SCOPE → out_of_scope
       → generate_answer
       → validate_result
       → END
+
+``query_graph`` is the only node with a choice after it: a traversal that
+located an explanation rather than containing one continues into retrieval,
+so the answer is grounded in the note that explains the link (PRD §37
+Demo 4). See ``after_graph``.
 
 What LangGraph is doing here, and what it is not. It owns the state merge,
 the conditional branch and the execution order — the things §11 lists. It
@@ -34,6 +39,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agents.nodes import (
     NodeDeps,
+    after_graph,
     make_action_node,
     make_api_node,
     make_classify,
@@ -87,13 +93,24 @@ def build_graph(deps: NodeDeps):  # type: ignore[no-untyped-def]
     for node in (
         "execute_api_tool",
         "retrieve",
-        "query_graph",
         "hybrid",
         "text_to_sql",
         "action",
         "out_of_scope",
     ):
         graph.add_edge(node, "generate_answer")
+
+    # The one branch that is not a straight line: an explanatory traversal
+    # continues into retrieval before generating (PRD §18, §37 Demo 4).
+    # Expressed as an edge rather than as a retrieval call inside the KG
+    # node, so that "this route can reach the notes" is visible in the graph
+    # shape — where §11 says the orchestration belongs — instead of being a
+    # fact you learn by reading a node body.
+    graph.add_conditional_edges(
+        "query_graph",
+        after_graph,
+        {"retrieve": "retrieve", "generate_answer": "generate_answer"},
+    )
 
     graph.add_edge("generate_answer", "validate_result")
     graph.add_edge("validate_result", END)
@@ -112,7 +129,7 @@ def graph_shape() -> dict[str, list[str]]:
         "classify_query": sorted(set(ROUTE_TO_NODE.values())),
         "execute_api_tool": ["generate_answer"],
         "retrieve": ["generate_answer"],
-        "query_graph": ["generate_answer"],
+        "query_graph": ["generate_answer", "retrieve"],
         "hybrid": ["generate_answer"],
         "text_to_sql": ["generate_answer"],
         "action": ["generate_answer"],

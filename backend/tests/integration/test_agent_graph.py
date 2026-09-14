@@ -160,9 +160,34 @@ def test_every_route_has_a_node() -> None:
 
 
 def test_every_branch_converges_on_validation() -> None:
+    """Every route reaches validation, however many hops it takes.
+
+    Asserted by walking the edges rather than by requiring one hop: since
+    ``query_graph`` can continue into ``retrieve`` (PRD §37 Demo 4), a
+    one-hop assertion would either fail on a correct graph or have to be
+    loosened into one that no longer checks convergence. Walking also
+    catches what the original could not — a branch that reaches generation
+    through a cycle, or not at all.
+    """
     shape = graph_shape()
-    for node in shape["classify_query"]:
-        assert shape[node] == ["generate_answer"], node
+
+    for start in shape["classify_query"]:
+        # Reachability, not path enumeration: `retrieve` is both a route of
+        # its own and the continuation of `query_graph`, so arriving at a
+        # node twice is a diamond rather than a loop. `seen` is per start
+        # and only stops the walk repeating work.
+        seen: set[str] = set()
+        frontier = [start]
+        while frontier:
+            node = frontier.pop()
+            if node in seen or node == "generate_answer":
+                seen.add(node)
+                continue
+            seen.add(node)
+            assert shape[node], f"{node} is a dead end"
+            frontier.extend(shape[node])
+        assert "generate_answer" in seen, f"{start} never reaches generation"
+
     assert shape["generate_answer"] == ["validate_result"]
     assert shape["validate_result"] == ["END"]
 
