@@ -1,0 +1,1 @@
+"""CareCopilot backend package."""
