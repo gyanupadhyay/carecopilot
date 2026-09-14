@@ -144,10 +144,25 @@ class ActionProposeRequest(BaseModel):
     """
 
     action: Literal["book_appointment", "cancel_appointment"]
-    #: ISO 8601, "YYYY-MM-DDTHH:MM". Empty is allowed and refused downstream
-    #: with a message the caller can act on, rather than a schema error that
-    #: says nothing about which appointment was meant.
-    when: str = Field(default="", max_length=64)
+    #: Carried in ``description`` rather than in a ``#:`` comment, which
+    #: Pydantic does not read: the format was documented here but absent
+    #: from /openapi.json and /docs, so a caller's only source for it was
+    #: this file. The downstream refusal names a day and a time in plain
+    #: words because it is spoken to a *patient* through the chat route --
+    #: it is not the API contract, and reading it as one leads you to send
+    #: "next Tuesday at 10am" and be refused every time.
+    when: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "ISO 8601 local or offset timestamp, 'YYYY-MM-DDTHH:MM'. "
+            "Natural language is not parsed here -- the agent normalises a "
+            "patient's phrasing before calling. Empty is allowed and refused "
+            "downstream with a message the caller can act on, rather than a "
+            "schema error that says nothing about which appointment was meant."
+        ),
+        examples=["2026-11-12T14:00"],
+    )
     appointment_type: str = Field(default="follow_up", max_length=32)
     reason: str = Field(default="", max_length=200)
 
