@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchDemoAccounts, login } from "@/lib/api";
+import { ApiError, fetchDemoAccounts, login } from "@/lib/api";
+import { DEMO_DISCLAIMER } from "@/lib/disclaimer";
 import type { DemoAccount } from "@/lib/types";
 import styles from "./Login.module.css";
 
@@ -14,7 +15,14 @@ import styles from "./Login.module.css";
  * rather than this file hard-coding them, so the list cannot drift from
  * what was actually seeded.
  */
-export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
+export function Login({
+  onAuthenticated,
+  notice,
+}: {
+  onAuthenticated: () => void;
+  /** Why this screen is showing, when it is showing for a reason. */
+  notice?: string | null;
+}) {
   const [accounts, setAccounts] = useState<DemoAccount[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,7 +53,16 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
       await login(email, password);
       onAuthenticated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed.");
+      // An ApiError holds the backend's own wording ("Incorrect email or
+      // password."), which is exactly what belongs here. Anything else is
+      // plumbing — with the API unreachable, `fetch` throws
+      // `TypeError: Failed to fetch`, and because that is an Error too, the
+      // old test put those three words under the password field.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not reach the server. Check your connection and try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -60,6 +77,12 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
           Ask about appointments, medications, lab results and what your
           clinicians wrote. Every answer cites the record it came from.
         </p>
+
+        {notice && (
+          <p className={styles.notice} role="status">
+            {notice}
+          </p>
+        )}
 
         <form onSubmit={submit} className={styles.form}>
           <label className={styles.field}>
@@ -123,8 +146,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
         )}
 
         <p className={styles.disclaimer}>
-          Demonstration only. All patient data is synthetic — no record here
-          describes a real person. Not medical advice.
+          {DEMO_DISCLAIMER} No record here describes a real person.
         </p>
       </div>
     </main>

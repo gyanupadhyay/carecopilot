@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { confirmAction } from "@/lib/api";
+import { ApiError, confirmAction } from "@/lib/api";
 import type { PendingAction } from "@/lib/types";
 import styles from "./PendingActionCard.module.css";
 
@@ -34,7 +34,15 @@ export function PendingActionCard({
       const result = await confirmAction(action.token);
       onResolved(result.message);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not confirm.");
+      // The backend's own reason when there is one — "This confirmation has
+      // expired", "already been carried out" — and a plain sentence when the
+      // failure was the network rather than the request. See Login.tsx for
+      // why `err.message` is not used for both.
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not reach the server, so nothing was confirmed. Try again.",
+      );
       setBusy(false);
     }
   }

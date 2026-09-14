@@ -89,6 +89,20 @@
   font-size: 14px;
 }
 
+/*
+  An expired session is news, not a fault: the warn tone rather than the
+  danger tone, so it does not read like the failed-password error two
+  elements below it.
+*/
+.notice {
+  margin: 0 0 16px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 14px;
+}
+
 .accounts {
   margin-top: 26px;
   padding-top: 20px;

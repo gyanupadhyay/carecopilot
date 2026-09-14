@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { streamMessage } from "@/lib/api";
+import { ApiError, streamMessage } from "@/lib/api";
+import { DEMO_DISCLAIMER } from "@/lib/disclaimer";
 import type { Turn } from "@/lib/types";
 import { PendingActionCard } from "./PendingActionCard";
 import { TurnDetails } from "./TurnDetails";
@@ -18,7 +19,19 @@ const SUGGESTIONS = [
 let seq = 0;
 const nextId = () => `turn-${++seq}`;
 
-export function Chat({ onSignOut }: { onSignOut: () => void }) {
+export function Chat({
+  onSignOut,
+  onSessionExpired,
+}: {
+  onSignOut: () => void;
+  /**
+   * The token stopped being accepted mid-session — it expires after
+   * JWT_TTL_MINUTES, so this is a tab left open over lunch, not an attack.
+   * Handled by the parent because the remedy is to show the sign-in screen,
+   * which this component cannot do from inside itself.
+   */
+  onSessionExpired: () => void;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,6 +65,10 @@ export function Chat({ onSignOut }: { onSignOut: () => void }) {
       setBusy(true);
 
       let streamed = "";
+      // Whether the turn reached a conclusion of its own. A stream can end
+      // without either: the connection simply stops after `meta`, which is
+      // what an unhandled exception inside the agent looks like from here.
+      let concluded = false;
       try {
         await streamMessage(text, conversationId, {
           onMeta: (meta) => {
@@ -64,6 +81,7 @@ export function Chat({ onSignOut }: { onSignOut: () => void }) {
           },
           onSources: (sources) => patch(replyId, { sources }),
           onDone: (response) => {
+            concluded = true;
             // `done` carries the validated answer. Guardrails run after
             // generation, so what was streamed is provisional until here —
             // `replaces_streamed_text` says whether validation changed it.
@@ -79,15 +97,46 @@ export function Chat({ onSignOut }: { onSignOut: () => void }) {
             setConversationId(response.conversation_id);
             setDisclaimer(response.disclaimer);
           },
-          onError: (detail) =>
-            patch(replyId, { error: detail, streaming: false }),
+          onError: (detail) => {
+            concluded = true;
+            patch(replyId, { error: detail, streaming: false });
+          },
         });
+
+        // The stream ended cleanly but said nothing — no deltas, no `done`,
+        // no `error`. Measured with the graph database stopped: an
+        // exception inside the agent ended the response after its `meta`
+        // frame, and the turn rendered as an empty bubble with no text and
+        // no explanation. A silent failure is the one kind a patient cannot
+        // act on, so it is named here rather than left blank. Partial text
+        // is kept instead — half an answer is still an answer, and saying
+        // it was cut short is better than discarding it.
+        if (!concluded && !streamed) {
+          patch(replyId, {
+            error:
+              "The answer was interrupted before it arrived. Please try again.",
+            streaming: false,
+          });
+        }
       } catch (err) {
+        // An expired session is not a failed answer: reporting it in the
+        // thread would leave the user reading "Unauthorized" next to a
+        // composer that can never succeed again. The parent sends them back
+        // to sign in instead.
+        if (err instanceof ApiError && err.status === 401) {
+          onSessionExpired();
+          return;
+        }
+        // Only an ApiError carries wording meant for a reader — it holds the
+        // backend's own `detail`. Anything else is plumbing: a dropped
+        // connection throws `TypeError: Failed to fetch`, and since that is
+        // an Error too, showing `err.message` for every failure put that
+        // string in front of patients and left this fallback unreachable.
         patch(replyId, {
           error:
-            err instanceof Error
+            err instanceof ApiError
               ? err.message
-              : "The assistant could not be reached.",
+              : "The assistant could not be reached. Check your connection and try again.",
           streaming: false,
         });
       } finally {
@@ -97,7 +146,7 @@ export function Chat({ onSignOut }: { onSignOut: () => void }) {
         patch(replyId, { streaming: false });
       }
     },
-    [busy, conversationId, patch],
+    [busy, conversationId, onSessionExpired, patch],
   );
 
   return (
@@ -219,10 +268,7 @@ export function Chat({ onSignOut }: { onSignOut: () => void }) {
             {busy ? "…" : "Send"}
           </button>
         </form>
-        <p className={styles.disclaimer}>
-          {disclaimer ??
-            "Demonstration with synthetic patient data. Not medical advice."}
-        </p>
+        <p className={styles.disclaimer}>{disclaimer ?? DEMO_DISCLAIMER}</p>
       </footer>
     </div>
   );

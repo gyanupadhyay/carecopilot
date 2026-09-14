@@ -53,6 +53,35 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * The message the backend meant the user to read.
+ *
+ * Every handled error arrives as {detail: "..."}; anything else is reported
+ * by `fallback` rather than by dumping a body that may be an HTML error
+ * page. Shared by both callers, because a status code on its own ("Stream
+ * failed (422)") is a developer's error message shown to a patient.
+ */
+async function errorDetail(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === "string") return body.detail;
+  } catch {
+    /* not JSON; the status line is all we have */
+  }
+  return fallback;
+}
+
+/**
+ * A 401 means the token is expired or invalid, so it is discarded here
+ * rather than left to the caller. Keeping it would leave the app in a state
+ * where the UI believes it is signed in — a token is present — and every
+ * request fails; a reload is then the only way out, and it lands on the
+ * same broken state.
+ */
+function discardTokenIfUnauthorized(status: number): void {
+  if (status === 401) setToken(null);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}/api${path}`, {
     ...init,
@@ -64,16 +93,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (!response.ok) {
-    // The backend returns {detail: "..."} for handled errors. Anything else
-    // is reported by status alone rather than by dumping a body that may be
-    // an HTML error page.
-    let detail = `Request failed (${response.status})`;
-    try {
-      const body = await response.json();
-      if (typeof body?.detail === "string") detail = body.detail;
-    } catch {
-      /* not JSON; the status line is all we have */
-    }
+    const detail = await errorDetail(response, `Request failed (${response.status})`);
+    discardTokenIfUnauthorized(response.status);
     throw new ApiError(detail, response.status);
   }
 
@@ -161,7 +182,14 @@ export async function streamMessage(
   });
 
   if (!response.ok || !response.body) {
-    throw new ApiError(`Stream failed (${response.status})`, response.status);
+    // Same treatment as request(): the backend's own wording, not the
+    // status line. A rejected turn says why it was rejected.
+    const detail = await errorDetail(
+      response,
+      "The assistant could not be reached. Please try again.",
+    );
+    discardTokenIfUnauthorized(response.status);
+    throw new ApiError(detail, response.status);
   }
 
   const reader = response.body.getReader();
