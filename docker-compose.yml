@@ -77,6 +77,14 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+    # Same policy as every other long-running service here, and the reason
+    # is the failure it prevents rather than the uptime it buys. Without it
+    # a Docker Desktop restart brings back backend, frontend, mcp, neo4j and
+    # ollama — all of which carry this line — and leaves the database
+    # stopped. The stack then *looks* healthy: five containers up, the API
+    # answering, and every request that touches Postgres failing with an
+    # internal error. Found exactly that way.
+    restart: unless-stopped
 
   init:
     build:
