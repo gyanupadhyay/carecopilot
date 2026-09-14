@@ -13,6 +13,7 @@ this module has exactly one shape.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 
 from pydantic import BaseModel, Field
@@ -43,6 +44,37 @@ def _day(value: date) -> str:
 
 def _humanize(moment: datetime) -> str:
     return f"{_day(moment.date())} at {moment.strftime('%H:%M')}"
+
+
+#: How many rows a list summary names before it stops.
+#:
+#: The summary goes into the prompt, so this is a token budget as much as a
+#: readability one. Ten covers every seeded patient's full history; beyond
+#: that the tail is truncated and *said* to be truncated, because a list
+#: that silently stops is one the model will describe as complete.
+_SUMMARY_LIMIT = 10
+
+
+def _listed(parts: Iterable[str]) -> str:
+    """Join row descriptions, naming the overflow rather than hiding it."""
+    rendered = list(parts)
+    shown = rendered[:_SUMMARY_LIMIT]
+    tail = len(rendered) - len(shown)
+    return "; ".join(shown) + (f"; and {tail} older" if tail > 0 else "")
+
+
+def _encounter_line(item: EncounterOut) -> str:
+    who = f" with {item.provider_name}" if item.provider_name else ""
+    why = f" for {item.reason}" if item.reason else ""
+    return f"{_day(item.encounter_date)} {item.encounter_type}{why}{who}"
+
+
+def _appointment_line(item: AppointmentOut) -> str:
+    who = f" with {item.provider_name}" if item.provider_name else ""
+    return (
+        f"{_humanize(item.appointment_date)} {item.appointment_type}"
+        f"{who} ({item.status})"
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -107,11 +139,20 @@ async def get_my_appointments(
 ) -> ToolResult:
     rows = await clinical.get_appointments(session, ctx, limit=limit)
     items = [AppointmentOut.model_validate(r) for r in rows]
+    if not items:
+        return ToolResult(
+            "get_my_appointments", [], "No appointments are on record.", count=0
+        )
     upcoming = sum(1 for i in items if i.appointment_date > datetime.now(UTC))
+    # See get_my_encounters below for why the slots are named rather than
+    # counted. Status is included because a cancelled slot and an attended
+    # one are the same row here, and an answer that conflates them is wrong
+    # in the way a patient would notice.
     return ToolResult(
         "get_my_appointments",
         items,
-        f"{len(items)} appointments on record, {upcoming} of them upcoming.",
+        f"{len(items)} appointments on record, {upcoming} of them upcoming: "
+        f"{_listed(_appointment_line(i) for i in items)}.",
         count=len(items),
     )
 
@@ -167,11 +208,19 @@ async def get_my_encounters(
 ) -> ToolResult:
     rows = await clinical.get_encounters(session, ctx, limit=limit)
     items = [EncounterOut.model_validate(r) for r in rows]
+    if not items:
+        return ToolResult("get_my_encounters", [], "No encounters are recorded.", count=0)
+    # The summary carries the visits themselves, not just how many there
+    # were. `_tool_facts` forwards only this string to the model — `items`
+    # never reaches it — so a count-only summary meant that "What visits
+    # have I had?" could be answered with nothing but "you have had 5",
+    # while the reason for each sat unread in the rows. Every other tool
+    # here already names its content; these two were the exceptions.
     return ToolResult(
         "get_my_encounters",
         items,
-        f"{len(items)} encounters on record."
-        + (f" Most recent: {_day(items[0].encounter_date)}." if items else ""),
+        f"{len(items)} encounters on record: "
+        f"{_listed(_encounter_line(i) for i in items)}.",
         count=len(items),
     )
 
@@ -262,7 +311,19 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="get_my_appointments",
-        description="Appointment history, most recent first, including past visits.",
+        # "including past visits" used to end this line, and it was the whole
+        # of the confusion with get_my_encounters below: the two tools were
+        # separated by the word "visit" while this description claimed it.
+        # Asked "What visits have I had at the clinic?", the model picked
+        # this tool — correctly, by the catalogue as written — and answered
+        # with a count of booked slots instead of what happened at them.
+        # The axis is scheduling versus clinical, so both descriptions now
+        # say which side they are on.
+        description=(
+            "Scheduled appointment slots and their status — booked, "
+            "cancelled, completed. A scheduling record: when the patient was "
+            "due in, not what happened once they arrived."
+        ),
         fn=get_my_appointments,
         params=HistoryWindow,
         tags=("appointments",),
@@ -287,7 +348,14 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="get_my_encounters",
-        description="History of clinical visits, most recent first.",
+        # "most recent first" is kept, and "all" is the word that separates
+        # this from get_my_last_encounter directly below — which answers the
+        # same question about one visit.
+        description=(
+            "All clinical visits that took place, most recent first: date, "
+            "clinician and the reason for each. The record of attended "
+            "care, as opposed to the appointment slots that scheduled it."
+        ),
         fn=get_my_encounters,
         params=HistoryWindow,
         tags=("encounters",),
