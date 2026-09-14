@@ -1,0 +1,163 @@
+.wrap {
+  margin-top: 10px;
+}
+
+.sources {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sources li {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+}
+
+.marker {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sourceBody {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.sourceTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sourceMeta {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* --- developer panel --- */
+
+.details {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.details[open] .summary::before {
+  content: "▾";
+}
+
+.route {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.timing {
+  font-variant-numeric: tabular-nums;
+}
+
+.guardrail {
+  color: var(--warn);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 14px;
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.key {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.value,
+.valueMono {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.valueMono {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.stage {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sqlBlock {
+  margin-top: 12px;
+}
+
+.sqlLabel {
+  margin: 0 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.sql {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  /* SQL is the one thing here allowed to scroll sideways rather than wrap:
+     broken keywords are much harder to read than a scrollbar. */
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}

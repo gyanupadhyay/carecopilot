@@ -1,0 +1,97 @@
+/* One token set, defined once on :root and redefined for dark.
+   Everything else reads the tokens, so a colour is never hard-coded at a
+   component and never defined only inside a media query. */
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-muted: #f0f2f5;
+  --border: #dfe3e8;
+  --text: #16191d;
+  --text-muted: #5b6470;
+  --text-faint: #8b95a1;
+
+  --accent: #1f6f5c;
+  --accent-soft: #e6f2ee;
+  --accent-text: #ffffff;
+
+  --warn: #9a5b00;
+  --warn-soft: #fdf2e2;
+  --danger: #a12a1f;
+  --danger-soft: #fbeceb;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317;
+    --surface: #181c22;
+    --surface-muted: #1f242b;
+    --border: #2b323b;
+    --text: #e8ecf1;
+    --text-muted: #9aa5b1;
+    --text-faint: #6c7783;
+
+    --accent: #4fb79b;
+    --accent-soft: #16302a;
+    --accent-text: #06120f;
+
+    --warn: #e0a458;
+    --warn-soft: #2c2213;
+    --danger: #e8867c;
+    --danger-soft: #2e1a18;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
