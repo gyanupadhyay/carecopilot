@@ -1,0 +1,321 @@
+# CareCopilot, whole stack (PRD §29).
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# No API key is needed: the default stack serves Qwen3-8B from the `ollama`
+# service, which is what PRD §3 asks for. The first `up` downloads ~5GB of
+# weights before the backend will start.
+#
+#   frontend  http://localhost:3000
+#   API docs  http://localhost:8000/docs
+#   MCP       http://localhost:8100/mcp
+#   Ollama    http://localhost:11434
+#
+# Three things here are worth reading rather than skimming.
+#
+# *The database is created with two roles, not one.* `carecopilot` owns the
+# schema; `carecopilot_ro` is the least-privilege role Text-to-SQL runs as —
+# SELECT on four tables, read-only transactions, and row-level security it
+# cannot bypass because it owns nothing. docker/initdb/20-roles.sql explains
+# why owning a table would void the whole boundary.
+#
+# *Migrations and seeding are their own service.* `init` runs to completion
+# before the API starts, so a container that is up is a container whose
+# schema matches its code. Folding this into the API's entrypoint would make
+# every replica race to migrate the same database. `ollama-pull` is a second
+# instance of the same pattern, for the same reason.
+#
+# *The model host is configured as OLLAMA_BASE_URL, not LLM_BASE_URL.* The
+# latter overrides whichever provider is selected; setting it here would
+# quietly redirect Gemini or Groq at the Ollama container for anyone who
+# switched LLM_PROVIDER in .env.
+
+name: carecopilot
+
+services:
+  db:
+    # pgvector's own image rather than postgres:18 — the extension is a
+    # compiled C module, so it has to be present in the image; installing it
+    # at runtime would mean a build toolchain in the database container.
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-carecopilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-carecopilot}
+      POSTGRES_DB: ${POSTGRES_DB:-carecopilot}
+    volumes:
+      # /var/lib/postgresql, NOT /var/lib/postgresql/data.
+      #
+      # PostgreSQL 18 changed the convention: the image now stores data in a
+      # major-version subdirectory (…/18/docker) so that `pg_upgrade --link`
+      # can run without crossing a mount boundary. Mounting at the old path
+      # makes the entrypoint refuse to start — it sees a volume where it
+      # expects a version directory and exits 1 rather than risk the data.
+      # See docker-library/postgres#1259.
+      - pgdata:/var/lib/postgresql
+      # Runs once, on an empty data directory, as the bootstrap superuser.
+      # CREATE EXTENSION needs rights the application role does not have, so
+      # this is the only place the extensions can come from.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      # 5433 on the host by default, not 5432. A machine with PostgreSQL
+      # installed already owns 5432, and Docker Desktop does not reliably
+      # refuse that publish — it binds, reports success, and host
+      # connections reach the native server instead. The stack then runs on
+      # two databases that look like one: the containers on this volume,
+      # anything started from a shell on the native server. Found the hard
+      # way, as a knowledge graph built from one and queried against the
+      # other.
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      # -d and -U are both required: without them pg_isready checks the
+      # server socket but not that *this* database accepts connections, and
+      # the init container then races the initdb scripts.
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-carecopilot} -d ${POSTGRES_DB:-carecopilot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  init:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: &backend-env
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-carecopilot}:${POSTGRES_PASSWORD:-carecopilot}@db:5432/${POSTGRES_DB:-carecopilot}
+      ANALYTICS_DATABASE_URL: postgresql+psycopg://carecopilot_ro:${ANALYTICS_PASSWORD:-carecopilot_ro}@db:5432/${POSTGRES_DB:-carecopilot}
+      VECTOR_BACKEND: pgvector
+      # PRD §2/§3: Qwen3-8B on Ollama is the default. LLM_API_KEY stays
+      # empty for it — a server you host has no key to issue.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_ROUTER_MODEL: ${LLM_ROUTER_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      # Deliberately *not* LLM_BASE_URL. That one overrides whichever
+      # provider is selected, so setting it here would send a request meant
+      # for Gemini to the Ollama container the moment someone switched
+      # LLM_PROVIDER in .env.
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      KG_ENABLED: ${KG_ENABLED:-true}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-carecopilot}
+      EMBEDDING_PROVIDER: local
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      RERANKER: ${RERANKER:-llm}
+      # Generated per process when unset, which is right for a dev stack and
+      # wrong for anything shared: an unset secret means every restart
+      # invalidates the tokens it issued before it.
+      JWT_SECRET: ${JWT_SECRET:-}
+      ACTION_TOKEN_SECRET: ${ACTION_TOKEN_SECRET:-}
+      BACKEND_INTERNAL_URL: http://backend:8000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - fastembed:/home/app/.cache/fastembed
+    # Migrate, seed, index — each step idempotent, because this runs on
+    # every `docker compose up` and not just the first.
+    #
+    #   --if-empty     seeds an empty database, succeeds quietly otherwise.
+    #                  `--reset` here would discard every conversation and
+    #                  booking made against the previous run.
+    #   --only-missing embeds documents that have no chunks yet. Without
+    #                  this the RAG route has an empty index and every note
+    #                  question degrades to "nothing was retrieved".
+    # Paths are relative to /srv/backend, the image's working directory.
+    command: >
+      sh -c "alembic upgrade head &&
+             python ../scripts/generate_data.py --if-empty &&
+             python ../scripts/ingest_documents.py --only-missing"
+    restart: "no"
+
+  # The relationship projection (PRD §17). Derived from Postgres and
+  # rebuildable from it at any time, so this volume is a cache, not a system
+  # of record — losing it costs one `python scripts/build_kg.py`.
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-carecopilot}
+      NEO4J_server_memory_heap_max__size: 512M
+      NEO4J_server_memory_pagecache_size: 256M
+    volumes:
+      - neo4jdata:/data
+    ports:
+      # 7687 bolt (the driver), 7474 HTTP (the browser UI, for looking at
+      # the graph by hand while writing a traversal).
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+    healthcheck:
+      # cypher-shell rather than a TCP probe: bolt accepts connections some
+      # seconds before the database is ready to answer, and `init-kg` would
+      # then race it.
+      test:
+        ["CMD-SHELL",
+         "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-carecopilot} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+
+  # Projects PostgreSQL into Neo4j, then exits. Third instance of the `init`
+  # pattern, and the one that makes the KG route work in a container: without
+  # it Neo4j comes up empty, every traversal returns zero rows, and the route
+  # answers "the relationship graph holds nothing matching that" — a failure
+  # that looks like bad data rather than a missing build step.
+  #
+  # Runs on every `up`, and rebuilds rather than merging — which is the
+  # script's default for a reason worth not re-deciding here. MERGE adds and
+  # never removes, so a reseed that moves a row between patients leaves the
+  # graph holding both ownership edges, and a traversal then returns another
+  # patient's prescription over correct queries and an intact isolation
+  # invariant. A rebuild is seconds against a view whose source is one
+  # container away; `--incremental` opts back into the fast path.
+  init-kg:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      # The projection reads the seeded rows, so it has to follow `init`
+      # rather than run beside it — a graph built from an empty database is
+      # an empty graph, and it would never be rebuilt.
+      init:
+        condition: service_completed_successfully
+    environment: *backend-env
+    command: ["python", "../scripts/build_kg.py"]
+    restart: "no"
+
+  # The model server (PRD §3, development mode). CPU-only as written, which
+  # runs qwen3:8b but slowly — expect tens of seconds per answer. For an
+  # NVIDIA GPU, uncomment the `deploy` block and install the container
+  # toolkit on the host.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      # ~5GB of weights. Without this every `docker compose down` throws
+      # them away and the next `up` re-downloads them.
+      - ollama:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      # `ollama list` rather than a curl against /api/tags: the image ships
+      # no curl or wget, and the CLI is talking to the same server.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+
+  # Pulls the weights once, then exits. Its own service rather than a step
+  # in the backend's entrypoint, for the same reason `init` is: a pull is
+  # slow, idempotent, and must happen before the first request, not during
+  # it — and every backend replica sharing one pull beats each racing to
+  # fetch the same 5GB.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # The CLI talks to the server over this, so the pull lands in the
+      # `ollama` service's volume rather than in this throwaway container.
+      OLLAMA_HOST: http://ollama:11434
+    # No shell. A `sh -c` form here is a trap: compose splits a string
+    # `command` on whitespace, so `sh -c "ollama pull qwen3:8b"` arrives as
+    # sh -c 'ollama' 'pull' 'qwen3:8b' — which runs bare `ollama`, opens its
+    # interactive launcher, finds no TTY, and pulls nothing. Exec form takes
+    # the arguments as written.
+    entrypoint: ["/bin/ollama", "pull"]
+    # OLLAMA_MODEL, not LLM_MODEL. They are different things that usually
+    # hold the same value: LLM_MODEL is whatever the *selected* provider
+    # calls, so an .env configured for Groq carries a Groq model id, and
+    # feeding that to `ollama pull` asks its registry for a model that was
+    # never there ("pull model manifest: file does not exist").
+    command: ["${OLLAMA_MODEL:-qwen3:8b}"]
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+      # So a backend that is up is one whose graph is populated. Same
+      # reasoning as `init`: the alternative is a first KG question that
+      # returns nothing and reads as a data problem.
+      init-kg:
+        condition: service_completed_successfully
+      # Waiting on the pull, not just the server: an Ollama that is up but
+      # has no qwen3:8b answers the first chat with a 404, which surfaces
+      # as a broken assistant rather than as a missing model.
+      ollama-pull:
+        condition: service_completed_successfully
+    environment: *backend-env
+    volumes:
+      - fastembed:/home/app/.cache/fastembed
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  mcp:
+    build:
+      context: .
+      dockerfile: docker/mcp.Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      # The script defaults to 127.0.0.1, which in a container accepts only
+      # connections from inside that same container. The default stays safe
+      # for a local run; the container overrides it.
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8100
+    ports:
+      - "${MCP_PORT:-8100}:8100"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        # Baked in at build time: Next.js inlines NEXT_PUBLIC_* into the
+        # client bundle, so this cannot be supplied at run time. It is the
+        # URL the *browser* uses, which is why it is localhost and not the
+        # compose service name.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  # The embedding model is ~130MB and downloads on first use. Without this
+  # every container start pays for it again.
+  fastembed:
+  # Qwen3-8B is ~5GB. Same reasoning, two orders of magnitude more painful.
+  ollama:
+  neo4jdata:

@@ -1,0 +1,58 @@
+# CareCopilot's Qwen3-8B variant (PRD §3, §35).
+#
+#   ollama create carecopilot-qwen3 -f ollama/Modelfile
+#   LLM_MODEL=carecopilot-qwen3 docker compose up
+#
+# Optional. The stack runs on stock `qwen3:8b`; this exists to pin the
+# sampling parameters that the agent's structured calls depend on, so that
+# a change to Ollama's defaults cannot quietly alter routing behaviour.
+#
+# There is deliberately no SYSTEM instruction here. CareCopilot's system
+# prompt is assembled per request in app/prompts/system.py, where it can
+# carry the retrieval context boundaries that PRD §24 requires; baking a
+# second, weaker one into the model would give the agent two sets of
+# standing instructions and no way to tell which applied.
+
+FROM qwen3:8b
+
+# Near-greedy. Routing, tool-argument construction and SQL generation are
+# classification tasks with one right answer, and PRD §27 measures them for
+# accuracy — sampling variance there shows up as an eval score that moves
+# without the code changing.
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.05
+
+# Sized for the largest prompt the app builds: system instructions, up to
+# eight reranked chunks (RAG_CONTEXT_TOKEN_BUDGET=3000), the conversation
+# digest, and the tool catalogue. Qwen3 supports far more, but every token
+# of context is memory the server holds per concurrent request.
+PARAMETER num_ctx 16384
+
+# Qwen3 is a hybrid-thinking model. Its <think> blocks are stripped at the
+# provider boundary (app/llm/openai_compatible.py) because PRD §26 forbids
+# surfacing chain-of-thought — so they cost latency and tokens and reach
+# nobody. Turning them off here is the cheaper half of the same decision;
+# the stripping stays regardless, since this Modelfile is optional and
+# `/no_think` is not honoured by every Qwen3 build.
+PARAMETER num_predict 1024
+
+# --- Quantization (PRD §36 P3) ---------------------------------------- #
+#
+# The `FROM` tag above *is* the quantization choice: Ollama's `qwen3:8b` is
+# Q4_K_M, roughly 5GB. It is a deployment decision rather than application
+# code — nothing in the backend changes — so the lever is this line and
+# OLLAMA_MODEL, not a setting.
+#
+#   qwen3:8b         Q4_K_M   ~5.2GB   the default; what compose pulls
+#   qwen3:8b-q8_0    Q8_0     ~8.9GB   when 8-bit fidelity is wanted
+#   qwen3:8b-fp16    FP16     ~16GB    reference quality, GPU only
+#
+# Measure before trading up. This project's structured calls — routing, tool
+# selection, SQL — are constrained by JSON Schema at the decoding layer, so
+# the failure quantization would cause is not malformed output but a *worse
+# choice* inside a valid enum. That shows up in §27's router and tool
+# accuracy and nowhere else, which is the number to compare across tags.
+#
+# vLLM takes the same decision as a flag instead:
+#   vllm serve Qwen/Qwen3-8B --quantization awq --port 8001
