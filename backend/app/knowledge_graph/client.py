@@ -126,6 +126,27 @@ async def run_read(
     except neo4j_exceptions.Neo4jError as exc:
         log.error("kg.query_failed", code=getattr(exc, "code", None))
         raise GraphUnavailable("The graph database refused the query.") from exc
+    except (OSError, ValueError) as exc:
+        # The driver does not route every reachability failure through
+        # ServiceUnavailable. A host that does not resolve — a stopped
+        # container, so `neo4j` is no longer a name on the network — raises a
+        # bare ValueError("Cannot resolve address neo4j:7687") out of its own
+        # DNS resolver, and socket-level refusals can arrive as OSError.
+        #
+        # Neither is a Neo4jError, so both escaped this block and left the
+        # agent's `except GraphUnavailable` handler unreached. The measured
+        # result was worse than a failed query: the exception propagated out
+        # of the LangGraph node, killed the SSE response after its `meta`
+        # frame, and the patient was shown an empty answer bubble with no
+        # message at all. Degrading here is what makes the graph the
+        # optional infrastructure PRD §33 says it is.
+        #
+        # Safe to catch broadly: no neo4j exception derives from either, so
+        # this cannot shadow the three handlers above.
+        log.warning(
+            "kg.unreachable", uri=settings.neo4j_uri, error=type(exc).__name__
+        )
+        raise GraphUnavailable("Could not reach the graph database.") from exc
 
     return list(records)
 

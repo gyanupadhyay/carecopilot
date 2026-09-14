@@ -183,6 +183,56 @@ def test_the_summary_is_composed_from_returned_values() -> None:
     assert "Type 2 diabetes mellitus" in summary
 
 
+class _DriverRaising:
+    """A driver whose session fails the way an unreachable host fails."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def session(self, **_: object) -> object:
+        exc = self._exc
+
+        class _Session:
+            async def __aenter__(self) -> None:
+                raise exc
+
+            async def __aexit__(self, *_: object) -> bool:
+                return False
+
+        return _Session()
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        # What a stopped container actually raises: the driver's own DNS
+        # resolver, not a Neo4j error type.
+        ValueError("Cannot resolve address neo4j:7687"),
+        OSError("connection refused"),
+    ],
+    ids=["unresolvable-host", "refused-socket"],
+)
+async def test_an_unreachable_graph_degrades_rather_than_escaping(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> None:
+    """Reachability failures must arrive as GraphUnavailable (PRD §33).
+
+    Neither of these derives from ``Neo4jError``, so both once escaped
+    ``run_read`` untranslated — past the agent's ``except GraphUnavailable``
+    handler, out of the LangGraph node, and into the SSE response, which
+    ended after its ``meta`` frame. The patient saw an empty answer bubble.
+
+    The graph is derived, optional infrastructure; a stopped Neo4j is a
+    degraded answer, never a dead turn.
+    """
+    from app.knowledge_graph import client
+
+    monkeypatch.setattr(client, "get_driver", lambda: _DriverRaising(exc))
+
+    with pytest.raises(client.GraphUnavailable):
+        await client.run_read("RETURN 1 AS ok")
+
+
 def test_state_carries_graph_rows_as_data_not_only_as_prose() -> None:
     """PRD §13 names `graph_results`; the rendered facts are not a substitute.
 
