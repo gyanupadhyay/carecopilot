@@ -28,6 +28,11 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Selects `output: "standalone"` in next.config.mjs. The runtime stage below
+# copies .next/standalone, so building without this produces an image whose
+# CMD has no server.js to run.
+ENV DOCKER_BUILD=1
+
 RUN npm run build
 
 # --- runtime -------------------------------------------------------------- #

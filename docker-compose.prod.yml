@@ -1,0 +1,71 @@
+# Production overlay. Applied on top of docker-compose.yml, never alone:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What it adds is a reverse proxy and the three settings that only make sense
+# once the stack has a public address. What it deliberately does NOT add is a
+# way to reach the database from outside: the base file binds every published
+# port to 127.0.0.1 (see BIND_ADDRESS), so Postgres, Neo4j and Ollama are
+# reachable from the host shell and from sibling containers, and from nowhere
+# else. Caddy is the only service with a port on a public interface.
+#
+# Requires CARECOPILOT_DOMAIN in .env — a hostname that already resolves to
+# this machine. Certificate issuance is a DNS check; an IP address or a name
+# pointing somewhere else fails at startup rather than degrading to HTTP.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      # The only 0.0.0.0 bindings in the deployed stack.
+      #
+      # 80 is required even though nothing is served over it: Let's Encrypt's
+      # HTTP-01 challenge is answered there. Closing it means certificates
+      # that never issue and never renew.
+      - "80:80"
+      - "443:443"
+      # HTTP/3. Harmless if the host firewall drops UDP; browsers fall back.
+      - "443:443/udp"
+    environment:
+      # `:?` rather than a default: a missing domain should stop the stack
+      # here, with a message naming the variable, rather than at certificate
+      # issuance with a TLS error that reads like a Caddy bug.
+      CARECOPILOT_DOMAIN: ${CARECOPILOT_DOMAIN:?set CARECOPILOT_DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and account keys live here. This volume is not a cache:
+      # losing it means re-issuing on every restart, and Let's Encrypt's rate
+      # limit is 5 duplicate certificates per week — which is reached in a
+      # single afternoon of restarts, after which the site serves no HTTPS at
+      # all until the window rolls over.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+      - mcp
+    restart: unless-stopped
+
+  frontend:
+    build:
+      args:
+        # Next inlines NEXT_PUBLIC_* at build time, so the public origin has
+        # to be known when the image is built — it cannot be supplied at run
+        # time. lib/api.ts appends "/api" itself, so this is the origin only.
+        NEXT_PUBLIC_API_URL: https://${CARECOPILOT_DOMAIN:?set CARECOPILOT_DOMAIN in .env}
+
+  backend:
+    environment:
+      # Same-origin in practice, so this list is belt-and-braces rather than
+      # load-bearing. It stays explicit because a future split — the UI moved
+      # to a CDN, say — would otherwise fail with an opaque browser error.
+      CORS_ORIGINS: https://${CARECOPILOT_DOMAIN}
+      # Caddy sits in front and overwrites X-Forwarded-For with the address
+      # it accepted the connection from, so the header can be believed here.
+      # Without this every visitor shares Caddy's container address and one
+      # person's traffic rate-limits everybody.
+      TRUST_PROXY_HEADERS: "true"
+
+volumes:
+  caddy_data:
+  caddy_config:

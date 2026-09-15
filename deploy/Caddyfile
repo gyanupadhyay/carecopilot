@@ -1,0 +1,55 @@
+# Reverse proxy and TLS terminator for the deployed stack.
+#
+# One origin serves everything: the Next.js UI at /, the API at /api/*, the
+# MCP endpoint at /mcp. That is not only tidiness — same-origin means the
+# browser sends no preflight and CORS stops being a thing that can be
+# misconfigured, and it means the frontend bundle carries no cross-origin
+# API host that has to be rebuilt when the domain changes.
+#
+# Certificates come from Let's Encrypt automatically, which is the whole
+# reason Caddy is here rather than nginx. It needs port 80 reachable for the
+# HTTP-01 challenge even though nothing is served over plain HTTP — Caddy
+# redirects it to HTTPS once the certificate exists.
+
+{$CARECOPILOT_DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			# Replace, do not append.
+			#
+			# Caddy's default is to APPEND the peer address to any
+			# X-Forwarded-For the client sent. The rate limiter reads the
+			# leftmost entry as the original client (app/api/rate_limit.py),
+			# so a visitor who sends their own X-Forwarded-For would have it
+			# survive as the leftmost value and could mint a fresh identity
+			# on every request — defeating the per-client limits entirely
+			# while looking, from the outside, like they were enforced.
+			#
+			# {remote_host} is the address Caddy actually accepted the
+			# connection from, and nothing upstream of Caddy can influence it.
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	handle /mcp* {
+		reverse_proxy mcp:8100 {
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	# Everything else is the web UI.
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	# SSE needs no special handling here: Caddy detects text/event-stream on
+	# the response and stops buffering by itself. Setting `flush_interval -1`
+	# unconditionally would disable buffering for ordinary JSON responses too,
+	# which costs throughput for no benefit.
+
+	log {
+		output stderr
+		format console
+	}
+}

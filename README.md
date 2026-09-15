@@ -57,6 +57,11 @@ LLM_PROVIDER=ollama_cloud   LLM_MODEL=qwen3:8b       # ollama.com/settings/keys
 LLM_PROVIDER=huggingface    LLM_MODEL=Qwen/Qwen3-8B  # hf.co/settings/tokens
 ```
 
+Setting either of those makes `ollama` and `ollama-pull` dead weight — a 5GB
+pull for weights nothing will call. They sit behind a compose profile for
+that reason; clear `COMPOSE_PROFILES` in `.env` and the rest of the stack
+starts unchanged.
+
 Same weights, someone else's hardware — about 3s per turn rather than 215s.
 The trace records the provider beside the model, so a measurement never
 loses the context of where it ran. Note that Ollama Cloud's catalogue is
@@ -260,6 +265,33 @@ python scripts/build_kg.py
 make run              # API on :8000
 make web-install && make web   # frontend on :3000
 ```
+
+## Deploying it
+
+[docs/deployment.md](docs/deployment.md) is the runbook: one always-free ARM
+VM running this same compose stack, with Caddy terminating TLS in front of
+it. `docker compose up` *is* the deployment, so there is no second
+architecture to keep in step with the first.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Only Caddy has a port on a public interface. Postgres, Neo4j and the rest
+bind `127.0.0.1` — see `BIND_ADDRESS`, and read the note there before
+changing it, because Docker publishes ports by writing iptables rules that
+bypass most host firewalls.
+
+**Inference is hosted by default** in a deployment, and a live demo should
+name the model it actually serves rather than letting a visitor assume the
+Qwen3-8B this README describes. The machine can serve a model itself —
+`COMPOSE_PROFILES=local-llm` and nothing else changes — but four ARM cores
+without a GPU make that a demonstration rather than a demo.
+
+The deployment also rate-limits itself (`app/api/rate_limit.py`): per-visitor
+limits so one caller cannot hammer it, and a global daily budget because a
+per-visitor limit does nothing against many visitors and a drained free quota
+takes the demo down for everyone.
 
 ## Evaluation
 
