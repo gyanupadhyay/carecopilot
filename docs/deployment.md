@@ -57,16 +57,44 @@ limit does nothing against many visitors.
 
 ## Phase 1 — The machine
 
-Oracle Cloud **Always Free**, `VM.Standard.A1.Flex`, 4 OCPUs / 24 GB,
-Ubuntu 24.04, 100 GB boot volume.
+Oracle Cloud, 100 GB boot volume, and a shape with at least ~8 GB of RAM.
+The stack sits around 3 GB at rest — Neo4j ~1.2 GB, backend ~1 GB, Postgres
+~400 MB, frontend ~200 MB — with the Next.js build as a brief ~2 GB peak.
 
-Check the shape carries the **"Always Free-eligible"** badge. For the first
-30 days the account is a trial with credits, and the console will let you
-build on a paid shape that gets reclaimed the day the trial ends — usually
-just after everything is finally working.
+**What the free tier promises and what it delivers are different things.**
+Always Free includes `VM.Standard.A1.Flex` at 4 OCPUs / 24 GB, which is the
+shape to want. It is also chronically unavailable: this deployment failed on
+it repeatedly in `ap-hyderabad-1` at 4/24, 2/12 and 1/6, and the paid AMD
+`E4.Flex` was out of capacity too. `VM.Standard.E5.Flex` at 1 OCPU / 12 GB
+was the first to launch.
 
-"Out of host capacity" on the ARM shape is Oracle's well-known shortage, not
-a mistake. Try another availability domain and retry.
+So budget for capacity hunting, and know the escape routes:
+
+- **Different shape families sit on different host pools.** Try E5, then
+  Intel `VM.Standard3.Flex`, then E3. This is what eventually worked.
+- **Smaller requests fit in gaps a 4-OCPU block cannot.** Step down before
+  giving up on a family.
+- **A different availability domain** — only if your region has more than
+  one. Hyderabad does not.
+- **A different region is not an option** for Always Free, which is pinned
+  to your permanent home region; and trial accounts cannot subscribe to
+  additional regions at all.
+
+Anything other than A1 is a **paid** shape. During the 30-day trial it is
+covered by the $300 credit (E5 at 1/12 is about $32/month, so credits are
+not the constraint). **When the trial ends the account converts to Always
+Free and paid instances are stopped and reclaimed** — not billed, stopped.
+Put a calendar reminder a few days before. Either upgrade to Pay As You Go,
+or use the window to keep retrying for an A1 and rebuild on it, which is a
+`git clone` and a `docker compose up` away.
+
+### Oracle Linux, not Ubuntu
+
+The console resets the image whenever you change shape family, so an
+instance created after a few retries is likely running **Oracle Linux**
+(username `opc`) rather than Ubuntu (`ubuntu`). That is fine — everything
+runs in containers — but it changes the setup commands below. Check the
+**Username** field on the instance details page to see which you have.
 
 ### Two firewalls, and the second one is invisible
 
@@ -76,8 +104,17 @@ shut produces a site that times out with no error in any log.
 **Cloud:** Networking → VCN → Subnets → Security Lists → Default → add
 ingress rules for TCP `80` and TCP `443` from `0.0.0.0/0`.
 
-**Host:** Oracle's Ubuntu images ship iptables rules that drop everything but
-SSH:
+**Host:** Oracle's images ship a host firewall that drops everything but SSH.
+
+Oracle Linux (`firewalld`):
+
+```bash
+sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-port=443/tcp
+sudo firewall-cmd --reload
+```
+
+Ubuntu (`iptables`):
 
 ```bash
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
@@ -93,15 +130,33 @@ The base compose file binds them to loopback for exactly that reason.
 
 ### Docker
 
+Oracle Linux — the `get.docker.com` convenience script is the Debian path and
+does the wrong thing here:
+
 ```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker ubuntu
+sudo dnf install -y dnf-plugins-core git
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker opc
 exit                    # group membership needs a fresh login
 ```
 
-Then `uname -m` should print `aarch64`. Everything in the stack has an arm64
-build — including the one that could have stopped this cold, `onnxruntime`,
-which ships a `cp314` manylinux aarch64 wheel. Nothing compiles from source.
+Ubuntu:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker ubuntu
+exit
+```
+
+Log back in and check `docker run --rm hello-world` works *without* `sudo` —
+if it does not, the group has not taken effect and you logged back into the
+same session.
+
+**On ARM**, should you get an A1: everything in the stack has an arm64 build,
+including the one that could have stopped it cold. `onnxruntime` ships a
+`cp314` manylinux aarch64 wheel, so nothing compiles from source.
 
 ## Phase 2 — A hostname
 
@@ -115,7 +170,16 @@ Any of these is fine:
 - a domain you own → an `A` record at the VM's public IP
 - a free subdomain (DuckDNS and similar) → same
 - `<ip-with-dashes>.sslip.io`, which resolves to the address encoded in it
-  and needs no account at all
+  and needs no account at all — `129.225.110.115` becomes
+  `129-225-110-115.sslip.io`
+
+Confirm it before building, because a failed challenge burns Let's Encrypt
+rate limit:
+
+```bash
+getent hosts <your-hostname>     # must print the VM's public IP
+curl -s https://api.ipify.org    # run on the VM; must be the same address
+```
 
 Put it in `.env` as `CARECOPILOT_DOMAIN`. `docker-compose.prod.yml` refuses
 to start without it rather than failing later inside certificate issuance.
@@ -141,18 +205,32 @@ LLM_MODEL=gemma4:31b
 
 RERANKER=heuristic                     # one fewer model call per RAG turn
 
-POSTGRES_PASSWORD=...                  # all four: generate, do not keep
-ANALYTICS_PASSWORD=...                 # the development defaults
-NEO4J_PASSWORD=...
-JWT_SECRET=...
-ACTION_TOKEN_SECRET=...
+POSTGRES_PASSWORD=...                  # generate; do not keep the default
+NEO4J_PASSWORD=...                     # generate
+JWT_SECRET=...                         # generate
+ACTION_TOKEN_SECRET=...                # generate
+
+ANALYTICS_PASSWORD=carecopilot_ro      # pinned — see below
 ```
 
-Generate each secret with:
+Generate each with:
 
 ```bash
 python3 -c "import secrets;print(secrets.token_urlsafe(48))"
 ```
+
+**`ANALYTICS_PASSWORD` cannot be randomised yet**, and it is worth knowing
+why rather than discovering it as an authentication failure.
+`docker/initdb/20-roles.sql` hardcodes the role's password, so changing the
+variable only changes the connection string and the two stop matching.
+
+Living with a known password here is defensible but is not nothing: the role
+is reachable only from inside the compose network (the database binds
+loopback), it holds SELECT on four tables, its transactions are read-only,
+and row-level security it cannot bypass applies. So it is a
+defence-in-depth gap rather than an exposure. The fix is to make that init
+script read the password from the environment; until then, treat this as a
+known follow-up.
 
 Then:
 
@@ -173,7 +251,12 @@ Watch it come up with `docker compose logs -f`.
 In order, because each failure points somewhere different:
 
 1. `curl https://<domain>/api/health` → `database: ok`, `vector_backend: pgvector`
-2. `/api/auth/demo-accounts` lists accounts — the seed ran
+2. `/docs` returns **404** and `/api/auth/demo-accounts` returns **404** —
+   both are correct in production. The second is deliberate
+   (`app/api/routes/auth.py`): an endpoint that hands out working
+   credentials should not be reachable in a deployment just because the data
+   behind it is synthetic. It does mean a visitor cannot discover the login
+   from the API, so publish it on the page or in the README.
 3. Log in through the UI — TLS and the baked-in origin are right
 4. "when is my next appointment?" — API route, model reachable
 5. "why was I prescribed metformin?" — Neo4j reachable and populated
