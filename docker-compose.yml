@@ -130,6 +130,20 @@ services:
       EMBEDDING_PROVIDER: local
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       RERANKER: ${RERANKER:-llm}
+      # This block is an allowlist, not a pass-through: a container sees
+      # only what is named here, so a setting added to .env and not to this
+      # list is silently inert — the application runs on its own default
+      # and nothing reports the discrepancy. Found exactly that way, with
+      # DEMO_ACCOUNTS_PUBLIC=true in .env and the endpoint still refusing.
+      # Anything added to app/config.py that a deployment might tune needs
+      # a line here too.
+      DEMO_ACCOUNTS_PUBLIC: ${DEMO_ACCOUNTS_PUBLIC:-false}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-6}
+      RATE_LIMIT_PER_DAY: ${RATE_LIMIT_PER_DAY:-100}
+      RATE_LIMIT_DAILY_BUDGET: ${RATE_LIMIT_DAILY_BUDGET:-1000}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
       # Generated per process when unset, which is right for a dev stack and
       # wrong for anything shared: an unset secret means every restart
       # invalidates the tokens it issued before it.
