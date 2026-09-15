@@ -17,6 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.rate_limit import RateLimited
 from app.auth.context import AuthorizationError
 from app.auth.security import TokenError
 from app.observability.logging import get_logger
@@ -26,11 +27,18 @@ from app.schemas.common import ErrorResponse
 log = get_logger(__name__)
 
 
-def _error(status_code: int, detail: str, code: str) -> JSONResponse:
+def _error(
+    status_code: int,
+    detail: str,
+    code: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
     body = ErrorResponse(
         detail=detail, code=code, request_id=current_request_id() or None
     )
-    return JSONResponse(status_code=status_code, content=body.model_dump())
+    return JSONResponse(
+        status_code=status_code, content=body.model_dump(), headers=headers
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -45,6 +53,19 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _token(_: Request, __: TokenError) -> JSONResponse:
         return _error(
             status.HTTP_401_UNAUTHORIZED, "Invalid or expired session.", "unauthorized"
+        )
+
+    @app.exception_handler(RateLimited)
+    async def _rate_limited(_: Request, exc: RateLimited) -> JSONResponse:
+        # Retry-After is part of the contract, not decoration: without it a
+        # client retries at once and the limiter amplifies the load it is
+        # shedding. The detail says when the window reopens for the same
+        # reason — a refusal a user cannot act on reads as a broken demo.
+        return _error(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            exc.detail,
+            exc.code,
+            headers={"Retry-After": str(exc.retry_after)},
         )
 
     @app.exception_handler(StarletteHTTPException)

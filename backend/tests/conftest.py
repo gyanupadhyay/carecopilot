@@ -14,6 +14,13 @@ os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("JWT_SECRET", "test-secret-not-used-outside-tests")
 os.environ.setdefault("ACTION_TOKEN_SECRET", "test-action-secret")
 
+# The demo rate limiter is process-global and counts every request in the
+# run, so leaving it on would make the suite fail on its own throughput
+# rather than on behaviour — and the failure would move as tests were added.
+# tests/integration/test_rate_limit_api.py turns it back on for itself,
+# which is where the wiring is actually asserted.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+
 import pytest
 
 from app.auth.context import AuthContext

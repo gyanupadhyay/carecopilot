@@ -17,9 +17,10 @@ arrive.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import Llm, PatientScoped
+from app.api.rate_limit import enforce_rate_limit
 from app.auth.context import AuthorizationError
 from app.observability.logging import get_logger
 from app.schemas.clinical import AnalyticsOut, AnalyticsRequest
@@ -30,7 +31,14 @@ log = get_logger(__name__)
 router = APIRouter(tags=["analytics"])
 
 
-@router.post("/analytics", response_model=AnalyticsOut)
+@router.post(
+    "/analytics",
+    response_model=AnalyticsOut,
+    # Text-to-SQL is a model call like any other, and reachable without
+    # going through /api/chat — limiting only the chat endpoints would leave
+    # the cheaper door open.
+    dependencies=[Depends(enforce_rate_limit)],
+)
 async def run_analytics(
     payload: AnalyticsRequest,
     ctx: PatientScoped,

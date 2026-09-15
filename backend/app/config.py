@@ -151,6 +151,27 @@ class Settings(BaseSettings):
     backend_internal_url: str = "http://localhost:8000"
     cors_origins: str = "http://localhost:3000"
 
+    # --- Demo rate limiting -----------------------------------------------
+    #: Guards the endpoints that spend a model call. A public demo runs on a
+    #: free inference quota with published credentials, so the limits are
+    #: what keep "anyone can try it" from meaning "anyone can drain it".
+    #: See app/api/rate_limit.py for why there are two kinds.
+    rate_limit_enabled: bool = True
+    #: Per client. 0 disables that limit individually.
+    rate_limit_per_minute: int = 6
+    rate_limit_per_day: int = 100
+    #: Across all clients, per UTC day — the limit that protects the API key
+    #: itself, since a per-client one does nothing against many clients.
+    rate_limit_daily_budget: int = 1_000
+    #: Whether X-Forwarded-For may be believed. Off by default because the
+    #: header is client-supplied: with no proxy in front, trusting it lets
+    #: anyone forge a new identity per request and evade every per-client
+    #: limit. Turn it on only when a reverse proxy that sets it is in front
+    #: of the app — docker-compose.prod.yml does exactly that, because Caddy
+    #: is there and deploy/Caddyfile makes it replace the header rather than
+    #: append to it.
+    trust_proxy_headers: bool = False
+
     # --- Ops --------------------------------------------------------------
     environment: Environment = "development"
     log_level: str = "INFO"

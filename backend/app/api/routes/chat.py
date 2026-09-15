@@ -12,7 +12,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -24,6 +24,7 @@ from app.api.deps import (
     embedding_provider,
     llm_provider,
 )
+from app.api.rate_limit import enforce_rate_limit
 from app.auth.context import AuthorizationError
 from app.models import Conversation
 from app.schemas.chat import (
@@ -44,7 +45,14 @@ provider = llm_provider
 embedder = embedding_provider
 
 
-@router.post("/chat", response_model=ChatResponse)
+#: Applied to the two chat endpoints and to analytics — the three that spend
+#: a model call. Not to the conversation readers below, which are ordinary
+#: database reads, and never to /api/health, which the container health
+#: check and any uptime monitor poll on a schedule and must not be throttled.
+_rate_limited = [Depends(enforce_rate_limit)]
+
+
+@router.post("/chat", response_model=ChatResponse, dependencies=_rate_limited)
 async def chat(
     payload: ChatRequest,
     ctx: PatientScoped,
@@ -81,7 +89,7 @@ def _sse(event: chat_service.StreamEvent) -> str:
     return f"event: {event.name}\ndata: {payload}\n\n"
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=_rate_limited)
 async def chat_stream(
     payload: ChatRequest,
     ctx: PatientScoped,
