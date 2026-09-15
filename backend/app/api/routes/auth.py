@@ -78,11 +78,17 @@ async def me(ctx: CurrentUser, session: DbSession) -> SessionUser:
 async def demo_accounts(session: DbSession) -> list[DemoAccount]:
     """List seeded logins so the demo can be opened without a handoff.
 
-    Refused outside development. The dataset is synthetic either way, but an
-    endpoint that hands out working credentials should not be reachable in a
-    deployed environment just because the data behind it is fake.
+    Refused outside development unless DEMO_ACCOUNTS_PUBLIC is set. The
+    dataset is synthetic either way, but an endpoint that hands out working
+    credentials should not be reachable in a deployed environment just
+    because the data behind it is fake.
+
+    The exception exists because a public demo inverts the trade: a visitor
+    who cannot get past the sign-in screen is the whole thing failing, and
+    the credentials are published in the README regardless. See
+    ``demo_accounts_public`` in app/config.py.
     """
-    if settings.environment != "development":
+    if settings.environment != "development" and not settings.demo_accounts_public:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
         )

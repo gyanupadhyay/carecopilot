@@ -151,6 +151,24 @@ class Settings(BaseSettings):
     backend_internal_url: str = "http://localhost:8000"
     cors_origins: str = "http://localhost:3000"
 
+    #: Serve GET /auth/demo-accounts outside development.
+    #:
+    #: Off by default, because an endpoint that hands out working
+    #: credentials should not be reachable in a deployed environment just
+    #: because the data behind it is synthetic.
+    #:
+    #: But a *public* demo inverts that: the credentials are published in
+    #: the README anyway, and a visitor who cannot get past the login screen
+    #: is the whole product failing. The sign-in page reads this endpoint
+    #: rather than hard-coding the list, so that what it offers cannot drift
+    #: from what was actually seeded — turning it off does not hide the
+    #: credentials, it only makes them undiscoverable to someone who did not
+    #: read the repository.
+    #:
+    #: So this is a deployment decision, made explicitly, rather than a
+    #: weaker default or a hard-coded list in the frontend.
+    demo_accounts_public: bool = False
+
     # --- Demo rate limiting -----------------------------------------------
     #: Guards the endpoints that spend a model call. A public demo runs on a
     #: free inference quota with published credentials, so the limits are

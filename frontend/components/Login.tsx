@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ApiError, fetchDemoAccounts, login } from "@/lib/api";
+import { ApiError, fetchDemoAccounts, fetchHealth, login } from "@/lib/api";
 import { DEMO_DISCLAIMER } from "@/lib/disclaimer";
-import type { DemoAccount } from "@/lib/types";
+import type { DemoAccount, Health } from "@/lib/types";
 import styles from "./Login.module.css";
 
 /**
@@ -24,6 +24,7 @@ export function Login({
   notice?: string | null;
 }) {
   const [accounts, setAccounts] = useState<DemoAccount[]>([]);
+  const [health, setHealth] = useState<Health | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +44,14 @@ export function Login({
         // list that fails to load should not block a typed login.
         setAccounts([]);
       });
+
+    // Which model is actually answering. Asked rather than assumed: this
+    // project is built around a self-hosted Qwen3-8B, and a deployment is
+    // usually serving something else — so the page should say what it is
+    // instead of letting the README's description stand in for it.
+    fetchHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
   }, []);
 
   async function submit(event: React.FormEvent) {
@@ -147,6 +156,16 @@ export function Login({
 
         <p className={styles.disclaimer}>
           {DEMO_DISCLAIMER} No record here describes a real person.
+          {health && (
+            <>
+              {" "}
+              Answers come from <code>{health.model}</code>
+              {health.llm_provider === "ollama" ||
+              health.llm_provider === "vllm"
+                ? ", self-hosted."
+                : ` via ${health.llm_provider}. Run it yourself and it serves a self-hosted model instead.`}
+            </>
+          )}
         </p>
       </div>
     </main>

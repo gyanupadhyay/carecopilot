@@ -163,6 +163,18 @@ export interface LabResult {
   result_date: string;
 }
 
+/** GET /health. Unauthenticated, and the only place the UI learns which
+ * model is actually answering — see HealthResponse in the backend. */
+export interface Health {
+  status: string;
+  environment: string;
+  database: string;
+  vector_backend: string;
+  version: string;
+  model: string;
+  llm_provider: string;
+}
+
 export interface Page<T> {
   items: T[];
   count: number;

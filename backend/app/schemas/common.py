@@ -38,8 +38,23 @@ class ErrorResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """What this server is actually running.
+
+    ``model`` and ``llm_provider`` are here so a deployment can say which
+    model answered, without the sign-in page hard-coding a name that drifts
+    the moment LLM_MODEL changes. The project is built around a self-hosted
+    Qwen3-8B and a public demo will usually be serving something else; a
+    visitor who assumes otherwise has been misled by omission, and the
+    honest fix is for the answer to come from the process that knows.
+
+    Neither is a secret — both are published in the README — and this
+    endpoint stays unauthenticated so the login screen can read it.
+    """
+
     status: str
     environment: str
     database: str
     vector_backend: str
     version: str
+    model: str
+    llm_provider: str

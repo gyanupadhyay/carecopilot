@@ -36,4 +36,9 @@ async def health(session: DbSession) -> HealthResponse:
         database=database,
         vector_backend="pgvector" if using_pgvector() else "array",
         version=API_VERSION,
+        # Reported rather than assumed: a deployment that swapped the model
+        # should say so, and the process serving the answers is the only
+        # thing that cannot be wrong about which one it is.
+        model=settings.llm_model,
+        llm_provider=settings.llm_provider,
     )

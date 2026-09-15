@@ -18,6 +18,7 @@ import type {
   DemoAccount,
   LabResult,
   Medication,
+  Health,
   Page,
   PatientProfile,
   Source,
@@ -115,6 +116,10 @@ export async function login(email: string, password: string): Promise<string> {
 
 export function logout(): void {
   setToken(null);
+}
+
+export function fetchHealth(): Promise<Health> {
+  return request<Health>("/health");
 }
 
 export function fetchDemoAccounts(): Promise<DemoAccount[]> {
